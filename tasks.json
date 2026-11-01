@@ -1,0 +1,18 @@
+[
+    {
+        "name": "学习 C++",
+        "hours": 2
+    },
+    {
+        "name": "复习 Python",
+        "hours": 1
+    },
+    {
+        "name": "学习数据结构",
+        "hours": 3
+    },
+    {
+        "name": "语文",
+        "hours": 7
+    }
+]
