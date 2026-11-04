@@ -178,13 +178,14 @@ def run_agent(user_goal, max_hours):
     for error in errors:
         print(error)
 
-        
+
 def save_plan(plan):
 
     with open("study_plan.json", "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False, indent=4)
 
 goal = input("请告诉我你的学习目标：")
+print("\n学习计划已经保存到 study_plan.json")
 
 try:
     max_hours = float(input("每天最多学习多少小时："))
