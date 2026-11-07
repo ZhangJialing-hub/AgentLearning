@@ -13,33 +13,40 @@ client = OpenAI(
 
 
 # 1. 调用模型生成计划
-def create_plan(user_goal, errors=None):
+def create_plan(user_goal, max_hours,errors=None):
 
     messages = [
         {
-            "role": "system",
-            "content": """
+    "role": "system",
+    "content": f"""
 你是一个学习计划规划助手。
 
 根据用户目标生成学习计划。
-必须严格遵守用户提出的时间限制。
+
+严格遵守以下要求：
+1. 用户要求安排的总天数必须满足。
+2. 每天学习时长必须大于0。
+3. 每天学习时长不得超过 {max_hours} 小时。
+4. 必须先确定每天的学习时长，再安排对应的学习任务。
+5. 不允许为了安排更多学习内容而突破时间限制。
+6. 如果学习内容较多，应该减少每天的任务量，而不是增加学习时长。
 
 只返回合法 JSON，不要添加 Markdown 代码块。
 hours 必须是大于0的数字，不得带单位。
 
 格式：
-{
+{{
     "goal": "学习目标",
     "plan": [
-        {
+        {{
             "day": "第1天",
             "task": "具体学习任务",
             "hours": 1.5
-        }
+        }}
     ]
-}
+}}
 """
-        },
+},
         {
             "role": "user",
             "content": user_goal
@@ -117,6 +124,7 @@ def check_plan_hours(plan, max_hours):
 
 
 # 4. 生成、验证、反馈、重试
+
 def run_agent(user_goal, max_hours):
 
     max_retries = 3
@@ -127,10 +135,15 @@ def run_agent(user_goal, max_hours):
         print(f"\n正在生成计划，第{attempt + 1}次...")
 
         try:
-            content = create_plan(user_goal, errors)
+            content = create_plan(user_goal, max_hours, errors)
         except Exception as e:
             print("调用模型失败：", e)
-            return
+
+            return {
+                "success": False,
+                "message": "调用模型失败",
+                "errors": [str(e)]
+            }
 
         # 第一层：JSON 解析
         try:
@@ -161,22 +174,39 @@ def run_agent(user_goal, max_hours):
         # 所有检查通过
         print("\n计划验证通过！")
         print("学习目标：", plan["goal"])
-         
 
         for item in plan["plan"]:
             print(
                 f"{item['day']}：{item['task']}，"
                 f"{item['hours']}小时"
             )
+
         # 保存计划
-        save_plan(plan)
+        try:
+            save_plan(plan)
+        except Exception as e:
+            return {
+                "success": False,
+                "message": "计划生成成功，但保存失败",
+                "errors": [str(e)]
+            }
 
-        return
+        # 返回真实执行结果
+        return {
+            "success": True,
+            "message": "学习计划生成并保存成功",
+            "plan": plan
+        }
 
+    # 所有尝试都失败
     print("\n已达到最大尝试次数，计划仍未通过检查。")
-    print("最后一次错误：")
-    for error in errors:
-        print(error)
+
+    return {
+        "success": False,
+        "message": "学习计划生成失败，已达到最大尝试次数",
+        "errors": errors
+    }
+
 
 
 def save_plan(plan):
@@ -184,16 +214,17 @@ def save_plan(plan):
     with open("study_plan.json", "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False, indent=4)
 
-goal = input("请告诉我你的学习目标：")
-print("\n学习计划已经保存到 study_plan.json")
+if __name__ == "__main__":
 
-try:
-    max_hours = float(input("每天最多学习多少小时："))
+    goal = input("请告诉我你的学习目标：")
 
-    if max_hours <= 0:
-        print("每天最多学习时长必须大于0。")
-    else:
-        run_agent(goal, max_hours)
+    try:
+        max_hours = float(input("每天最多学习多少小时："))
 
-except ValueError:
-    print("请输入合法数字，例如 2 或 1.5。")
+        if max_hours <= 0:
+            print("每天最多学习时长必须大于0。")
+        else:
+            run_agent(goal, max_hours)
+
+    except ValueError:
+        print("请输入合法数字，例如 2 或 1.5。")
