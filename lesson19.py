@@ -16,6 +16,7 @@ client = OpenAI(
 )
 
 
+# 定义 Agent 可以使用的工具
 tools = [
     {
         "type": "function",
@@ -52,7 +53,9 @@ tools = [
     }
 ]
 
+
 def ask_agent(user_input):
+
     messages = [
         {
             "role": "system",
@@ -68,10 +71,17 @@ def ask_agent(user_input):
 - 如果用户没有提供每天最大学习时长，不要猜测，先询问用户。
 """
         },
-        {"role": "user", "content": user_input}
+        {
+            "role": "user",
+            "content": user_input
+        }
     ]
 
-    # 最多允许模型进行 5 轮决策
+    # 记录成功和失败的工具
+    completed_steps = []
+    failed_steps = []
+
+    # 最大模型请求轮数
     MAX_STEPS = 5
 
     for step in range(MAX_STEPS):
@@ -88,12 +98,12 @@ def ask_agent(user_input):
 
         message = response.choices[0].message
 
-        # 2. 如果模型没有调用工具，说明它准备直接回答
+        # 2. 如果模型没有调用工具，直接回答
         if not message.tool_calls:
             print("\nAgent：", message.content)
             return
 
-        # 3. 把模型的工具调用消息保存到对话历史
+        # 3. 保存模型的工具调用消息
         messages.append(message.model_dump(exclude_none=True))
 
         # 4. 逐个执行模型要求的工具
@@ -102,6 +112,13 @@ def ask_agent(user_input):
             function_name = tool_call.function.name
 
             print("\n模型选择的工具：", function_name)
+
+            # 初始化当前工具的执行状态
+            tool_status = {
+                "name": function_name,
+                "success": False,
+                "summary": ""
+            }
 
             try:
                 arguments = json.loads(
@@ -116,40 +133,80 @@ def ask_agent(user_input):
                     goal = arguments.get("goal")
                     max_hours = arguments.get("max_hours")
 
+                    # 检查学习目标是否合法
                     if not isinstance(goal, str) or not goal.strip():
                         result = "执行失败：学习目标不能为空"
+                        tool_status["summary"] = result
 
+                    # 检查每天的学习时长是否合法
                     elif (
                         isinstance(max_hours, bool)
                         or not isinstance(max_hours, (int, float))
                         or max_hours <= 0
                     ):
                         result = "执行失败：学习时长参数不合法"
+                        tool_status["summary"] = result
 
                     else:
-                     tool_result = run_agent(goal, max_hours)
+                        # 调用学习计划生成函数
+                        tool_result = run_agent(goal, max_hours)
 
-                     result = json.dumps(
-                       tool_result,
-                       ensure_ascii=False
-                    )       
+                        result = json.dumps(
+                            tool_result,
+                            ensure_ascii=False
+                        )
+
+                        # 根据工具实际返回结果判断是否成功
+                        if (
+                            isinstance(tool_result, dict)
+                            and tool_result.get("success") is True
+                        ):
+                            tool_status["success"] = True
+                            tool_status["summary"] = tool_result.get(
+                                "message",
+                                "学习计划生成成功"
+                            )
+                        else:
+                            tool_status["summary"] = (
+                                tool_result.get(
+                                    "message",
+                                    "学习计划生成失败"
+                                )
+                                if isinstance(tool_result, dict)
+                                else "工具返回结果格式不正确"
+                            )
+
                 elif function_name == "view_plan":
 
+                    # 读取之前保存的学习计划
                     plan = load_plan()
 
                     if plan is None:
                         result = "目前没有保存过学习计划。"
+                        tool_status["summary"] = result
+
                     else:
                         result = json.dumps(
                             plan,
                             ensure_ascii=False
                         )
 
+                        tool_status["success"] = True
+                        tool_status["summary"] = "学习计划读取成功"
+
                 else:
                     result = "执行失败：未知工具。"
+                    tool_status["summary"] = result
 
             except Exception as e:
                 result = f"工具执行失败：{str(e)}"
+                tool_status["summary"] = result
+
+            # 根据工具执行状态记录成功或失败
+            if tool_status["success"]:
+                completed_steps.append(tool_status)
+            else:
+                failed_steps.append(tool_status)
 
             # 5. 把工具执行结果交还给模型
             messages.append({
@@ -160,8 +217,19 @@ def ask_agent(user_input):
 
             print("工具执行结果：", result)
 
-    # 6. 如果循环执行完 5 轮仍未结束，强制停止
+    # 6. 达到最大执行轮数后停止
     print("\nAgent：达到最大执行步数，任务停止。")
+
+    if completed_steps:
+        print("\n已经成功完成的工具：")
+        for item in completed_steps:
+            print(f"- {item['name']}：{item['summary']}")
+
+    if failed_steps:
+        print("\n执行失败的工具：")
+        for item in failed_steps:
+            print(f"- {item['name']}：{item['summary']}")
+
 
 def main():
 
@@ -178,6 +246,7 @@ def main():
 
         try:
             ask_agent(user_input)
+
         except Exception as e:
             print("运行出错：", e)
 
