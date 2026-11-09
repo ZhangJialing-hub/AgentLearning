@@ -52,7 +52,20 @@ tools = [
         }
     }
 ]
+def show_execution_summary(completed_steps, failed_steps):
 
+    if completed_steps:
+        print("\n已经成功完成的工具：")
+        for item in completed_steps:
+            print(f"- {item['name']}：{item['summary']}")
+
+    if failed_steps:
+        print("\n执行失败的工具：")
+        for item in failed_steps:
+            print(f"- {item['name']}：{item['summary']}")
+
+    if not completed_steps and not failed_steps:
+        print("\n本次没有执行任何工具。")
 
 def ask_agent(user_input):
 
@@ -69,6 +82,14 @@ def ask_agent(user_input):
 - goal 必须包含用户提出的学习目标和学习天数。
 - max_hours 必须是用户提出的每天最大学习时长。
 - 如果用户没有提供每天最大学习时长，不要猜测，先询问用户。
+
+当用户明确要求制定学习计划时：
+1. 即使用户提供的学习时长不合理，也先调用 create_plan。
+2. 不要自行修改用户提供的参数。
+3. 如果工具返回参数错误，仔细阅读错误信息。
+4. 如果能够通过修正参数解决，可以再次调用工具。
+5. 如果无法解决，停止调用工具，向用户说明失败原因。
+6. 不要把执行失败的任务说成已经成功完成。
 """
         },
         {
@@ -83,6 +104,10 @@ def ask_agent(user_input):
 
     # 最大模型请求轮数
     MAX_STEPS = 5
+    MAX_TOOL_ATTEMPTS = 2
+
+# 记录每个工具在本次请求中实际执行了多少次
+    tool_attempts = {}
 
     for step in range(MAX_STEPS):
 
@@ -100,8 +125,11 @@ def ask_agent(user_input):
 
         # 2. 如果模型没有调用工具，直接回答
         if not message.tool_calls:
-            print("\nAgent：", message.content)
-            return
+              print("\nAgent：", message.content)
+
+              show_execution_summary(completed_steps,failed_steps)
+
+              return
 
         # 3. 保存模型的工具调用消息
         messages.append(message.model_dump(exclude_none=True))
@@ -120,10 +148,29 @@ def ask_agent(user_input):
                 "summary": ""
             }
 
+            # 检查工具是否已经达到最大执行次数
+            attempts = tool_attempts.get(function_name, 0)
+
+            if attempts >= MAX_TOOL_ATTEMPTS:
+                result = f"执行失败：工具 {function_name} 已达到最大执行次数"
+
+                tool_status["summary"] = result
+                failed_steps.append(tool_status)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": result
+                })
+
+                print("工具执行结果：", result)
+                continue
+
+            # 尚未达到上限，记录本次执行
+            tool_attempts[function_name] = attempts + 1
+
             try:
-                arguments = json.loads(
-                    tool_call.function.arguments
-                )
+                arguments = json.loads(tool_call.function.arguments)
 
                 print("模型提供的参数：", arguments)
 
@@ -219,6 +266,26 @@ def ask_agent(user_input):
 
     # 6. 达到最大执行轮数后停止
     print("\nAgent：达到最大执行步数，任务停止。")
+
+    messages.append({
+    "role": "system",
+    "content": """
+    工具调用轮数已经达到上限。
+    请根据之前的对话和工具执行结果，
+    向用户总结已经完成的任务和未完成的任务。
+    不要再次调用工具，也不要声称没有执行过的任务已经完成。
+    """
+})
+    show_execution_summary(
+    completed_steps,
+    failed_steps
+)
+    final_response = client.chat.completions.create(
+    model="deepseek-flash",
+    messages=messages
+)
+
+    print("\nAgent：", final_response.choices[0].message.content)
 
     if completed_steps:
         print("\n已经成功完成的工具：")
